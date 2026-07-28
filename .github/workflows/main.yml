@@ -55,8 +55,8 @@ jobs:
         env:
           RUN_NUMBER: ${{ github.run_number }}
         run: |
-          # Connect to Tailscale
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="tskey-auth-kZvDwABCsH11CNTRL-mk6GSohWYoP4kEy1SVupnPRbUDBfD2DCb"
+          # Connect to Tailscale using your new key
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="Tskey-auth-k34z9gbG4n11CNTRL-1yqmNGeRnb9aU2o18h8Nc9bPi8B5Z7bL"
           
           # DISABLE WINDOWS FIREWALL TO ALLOW SUNSHINE CONNECTIONS
           Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
