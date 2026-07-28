@@ -17,27 +17,31 @@ jobs:
         run: |
           $ProgressPreference = 'SilentlyContinue'
 
+          function Assert-Download($path) {
+            $size = (Get-Item $path).Length
+            Write-Host "$path size: $size bytes"
+            if ($size -lt 100KB) {
+              Write-Host "ERROR: $path download failed (file too small). Contents:"
+              Get-Content $path
+              exit 1
+            }
+          }
+
           Write-Host "Downloading Tailscale..."
           curl.exe -L -o tailscale-setup.exe "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe"
+          Assert-Download "tailscale-setup.exe"
           Start-Process -FilePath ".\tailscale-setup.exe" -ArgumentList "/quiet" -Wait
 
           Write-Host "Downloading Sunshine..."
           curl.exe -L -o sunshine.zip "https://github.com/LizardByte/Sunshine/releases/download/v0.23.1/sunshine-windows-portable.zip"
-
-          # Sanity check: make sure we actually got a zip, not an error page
-          $size = (Get-Item sunshine.zip).Length
-          Write-Host "Sunshine download size: $size bytes"
-          if ($size -lt 1MB) {
-            Write-Host "ERROR: Sunshine download failed (file too small). Contents:"
-            Get-Content sunshine.zip
-            exit 1
-          }
+          Assert-Download "sunshine.zip"
 
           Write-Host "Extracting Sunshine..."
           Expand-Archive sunshine.zip -DestinationPath C:\Sunshine -Force
 
           Write-Host "Installing ViGEmBus (gamepad support)..."
           curl.exe -L -o vigembus.exe "https://github.com/nefarius/ViGEmBus/releases/download/v1.22.0/ViGEmBus_1.22.0_x64_x86_arm64.exe"
+          Assert-Download "vigembus.exe"
           Start-Process -FilePath ".\vigembus.exe" -ArgumentList "/qn" -Wait
           $svc = Get-Service ViGEmBus -ErrorAction SilentlyContinue
           Write-Host "ViGEmBus status: $($svc.Status)"
@@ -50,9 +54,36 @@ jobs:
         run: |
           $ProgressPreference = 'SilentlyContinue'
 
-          Write-Host "Downloading Virtual Display Driver..."
-          curl.exe -L -o vdd.zip "https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/download/24.12.24/Signed-Driver-v24.12.24.zip"
+          Write-Host "Looking up latest Virtual Display Driver release via GitHub API..."
+          $headers = @{ "User-Agent" = "gh-actions" }
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/VirtualDrivers/Virtual-Display-Driver/releases/latest" -Headers $headers
+
+          Write-Host "Release found: $($release.tag_name)"
+          Write-Host "Available assets:"
+          $release.assets | ForEach-Object { Write-Host "  - $($_.name) ($($_.size) bytes)" }
+
+          # Prefer an x64 zip, otherwise take any zip
+          $asset = $release.assets | Where-Object { $_.name -match "x64" -and $_.name -like "*.zip" } | Select-Object -First 1
+          if (-not $asset) { $asset = $release.assets | Where-Object { $_.name -like "*.zip" } | Select-Object -First 1 }
+          if (-not $asset) {
+            Write-Host "ERROR: No zip asset found in the latest VDD release."
+            exit 1
+          }
+
+          Write-Host "Downloading: $($asset.name)"
+          curl.exe -L -o vdd.zip $asset.browser_download_url
+
+          $size = (Get-Item vdd.zip).Length
+          Write-Host "vdd.zip size: $size bytes"
+          if ($size -lt 100KB) {
+            Write-Host "ERROR: VDD download failed (file too small). Contents:"
+            Get-Content vdd.zip
+            exit 1
+          }
+
           Expand-Archive vdd.zip -DestinationPath C:\VDD -Force
+          Write-Host "Extracted files:"
+          Get-ChildItem -Path C:\VDD -Recurse | Select-Object FullName | Format-Table -AutoSize
 
           Write-Host "Trusting driver certificate..."
           $cert = Get-ChildItem -Path C:\VDD -Recurse -Filter "*.cer" | Select-Object -First 1
@@ -61,17 +92,46 @@ jobs:
             Import-Certificate -FilePath $cert.FullName -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
             Write-Host "Certificate imported."
           } else {
-            Write-Host "WARNING: No certificate found in package."
+            # Fall back: extract cert from the signed driver files
+            $sys = Get-ChildItem -Path C:\VDD -Recurse -Filter "*.dll" | Select-Object -First 1
+            if (-not $sys) { $sys = Get-ChildItem -Path C:\VDD -Recurse -Filter "*.sys" | Select-Object -First 1 }
+            if ($sys) {
+              $sig = Get-AuthenticodeSignature $sys.FullName
+              if ($sig.SignerCertificate) {
+                $certPath = "C:\VDD\extracted.cer"
+                [System.IO.File]::WriteAllBytes($certPath, $sig.SignerCertificate.Export("Cert"))
+                Import-Certificate -FilePath $certPath -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+                Import-Certificate -FilePath $certPath -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+                Write-Host "Certificate extracted from signed binary and imported."
+              }
+            } else {
+              Write-Host "WARNING: No certificate found; continuing anyway."
+            }
           }
 
           Write-Host "Installing driver..."
           $inf = Get-ChildItem -Path C:\VDD -Recurse -Filter "*.inf" | Select-Object -First 1
+          if (-not $inf) {
+            Write-Host "ERROR: No .inf file found in the VDD package. See extracted file list above."
+            exit 1
+          }
+          Write-Host "Using INF: $($inf.FullName)"
           pnputil /add-driver $inf.FullName /install
 
           Write-Host "Downloading nefcon (device creator)..."
           curl.exe -L -o nefcon.zip "https://github.com/nefarius/nefcon/releases/download/v1.11.0/nefcon_v1.11.0.zip"
+          $nsize = (Get-Item nefcon.zip).Length
+          Write-Host "nefcon.zip size: $nsize bytes"
+          if ($nsize -lt 100KB) {
+            Write-Host "Pinned nefcon URL failed, trying latest via API..."
+            $nrel = Invoke-RestMethod -Uri "https://api.github.com/repos/nefarius/nefcon/releases/latest" -Headers $headers
+            $nasset = $nrel.assets | Where-Object { $_.name -like "*.zip" } | Select-Object -First 1
+            curl.exe -L -o nefcon.zip $nasset.browser_download_url
+          }
           Expand-Archive nefcon.zip -DestinationPath C:\nefcon -Force
-          $nefcon = Get-ChildItem -Path C:\nefcon -Recurse -Filter "nefconw.exe" | Select-Object -First 1
+          $nefcon = Get-ChildItem -Path C:\nefcon -Recurse -Filter "nefconw.exe" | Where-Object { $_.FullName -match "x64" } | Select-Object -First 1
+          if (-not $nefcon) { $nefcon = Get-ChildItem -Path C:\nefcon -Recurse -Filter "nefconw.exe" | Select-Object -First 1 }
+          Write-Host "Using nefcon: $($nefcon.FullName)"
 
           Write-Host "Creating virtual display device..."
           & $nefcon.FullName --create-device-node --hardware-id "Root\MttVDD" --class-name "Display" --class-guid "4d36e968-e325-11ce-bfc1-08002be10318"
