@@ -60,4 +60,52 @@ jobs:
           $size = (Get-Item usbmmidd.zip).Length
           Write-Host "usbmmidd.zip size: $size bytes"
           if ($size -lt 100KB) {
-            Write-Host "WARNING: usbmmidd download failed. Skipping virtual display (RDP will
+            Write-Host "WARNING: usbmmidd download failed. Skipping (RDP will still work)."
+            exit 0
+          }
+
+          Expand-Archive usbmmidd.zip -DestinationPath C:\usbmmidd -Force
+          $dir = Get-ChildItem -Path C:\usbmmidd -Recurse -Filter "deviceinstaller64.exe" | Select-Object -First 1 | ForEach-Object { $_.DirectoryName }
+          Write-Host "Installer found at: $dir"
+          Set-Location $dir
+
+          Write-Host "Installing virtual display driver..."
+          .\deviceinstaller64.exe install usbmmidd.inf usbmmidd
+          Start-Sleep -Seconds 5
+
+          Write-Host "Enabling virtual monitor..."
+          .\deviceinstaller64.exe enableidd 1
+          Start-Sleep -Seconds 8
+
+          Write-Host "Display devices:"
+          Get-PnpDevice -Class Display | Format-Table Name, Status -AutoSize
+
+      # =============================================
+      # 3. Enable RDP (PRIMARY access method)
+      # =============================================
+      - name: Enable Remote Desktop
+        shell: powershell
+        run: |
+          Write-Host "Setting password for runneradmin..."
+          net user runneradmin "RdpPass123!"
+
+          Write-Host "Enabling RDP..."
+          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+          Write-Host "Relaxing NLA requirement (needed for some mobile RDP apps)..."
+          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 0
+
+          Write-Host "RDP enabled. User: runneradmin"
+
+      # =============================================
+      # 4. Configure Sunshine (secondary access)
+      # =============================================
+      - name: Configure Sunshine
+        shell: powershell
+        run: |
+          $sunshineDir = Get-ChildItem -Path C:\Sunshine -Recurse -Filter "sunshine.exe" | Select-Object -First 1 | ForEach-Object { $_.DirectoryName }
+          Write-Host "Sunshine found at: $sunshineDir"
+          echo "SUNSHINE_DIR=$sunshineDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          $confDir = Join-Path $sunshineDir "config
