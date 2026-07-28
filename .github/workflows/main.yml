@@ -24,8 +24,14 @@ jobs:
           Write-Host "Installing Virtual Display (usbmmidd)..."
           curl.exe --retry 5 -L -o usbmmidd.zip https://www.amyuni.com/downloads/usbmmidd_v2.zip
           Expand-Archive -Path usbmmidd.zip -DestinationPath C:\usbmmidd -Force
-          Start-Process -FilePath "C:\usbmmidd\deviceinstaller64.exe" -ArgumentList "install usbmmidd.inf usbmmidd" -Wait
-          Start-Process -FilePath "C:\usbmmidd\deviceinstaller64.exe" -ArgumentList "enableidd 1" -Wait
+          
+          # Dynamically find the exact path of the extracted installer
+          $installer = Get-ChildItem -Path "C:\usbmmidd" -Filter "deviceinstaller64.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
+          $installerDir = Split-Path $installer
+          
+          # Run the installer from its specific folder
+          Start-Process -FilePath $installer -WorkingDirectory $installerDir -ArgumentList "install usbmmidd.inf usbmmidd" -Wait
+          Start-Process -FilePath $installer -WorkingDirectory $installerDir -ArgumentList "enableidd 1" -Wait
           
           # Install Visual C++
           curl.exe --retry 5 --retry-connrefused -L -o vc_redist.x64.exe https://aka.ms/vs/17/release/vc_redist.x64.exe
