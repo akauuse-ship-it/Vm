@@ -1,6 +1,7 @@
 name: Moonlight Windows VM
 on:
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: windows-latest
@@ -14,117 +15,123 @@ jobs:
           reg add "HKEY_CURRENT_USER\Control Panel\Desktop" /v UserPreferencesMask /t REG_BINARY /d 9012038010000000 /f
           reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v DisableLockWorkstation /t REG_DWORD /d 1 /f
           reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Personalization" /v NoLockScreen /t REG_DWORD /d 1 /f
-          
-          # Enable Windows Audio Service
+
           Write-Host "Enabling Windows Audio Service..."
           Set-Service -Name Audiosrv -StartupType Automatic
           Start-Service -Name Audiosrv -ErrorAction SilentlyContinue
-          
-          # Install Virtual Display Driver to fake a monitor
+
           Write-Host "Installing Virtual Display (usbmmidd)..."
           curl.exe --retry 5 -L -o usbmmidd.zip https://www.amyuni.com/downloads/usbmmidd_v2.zip
           Expand-Archive -Path usbmmidd.zip -DestinationPath C:\usbmmidd -Force
-          
-          # Dynamically locate and run the installer
+
           $installer = Get-ChildItem -Path "C:\usbmmidd" -Filter "deviceinstaller64.exe" -Recurse | Select-Object -First 1
           Set-Location -Path $installer.DirectoryName
           Start-Process -FilePath $installer.FullName -ArgumentList "install usbmmidd.inf usbmmidd" -Wait
           Start-Process -FilePath $installer.FullName -ArgumentList "enableidd 1" -Wait
-          
-          # Install Visual C++
-          Set-Location -Path "D:\a\Vm\Vm" # Reset working directory
+
+          Set-Location -Path "$env:GITHUB_WORKSPACE"
           curl.exe --retry 5 --retry-connrefused -L -o vc_redist.x64.exe https://aka.ms/vs/17/release/vc_redist.x64.exe
           Start-Process ./vc_redist.x64.exe -ArgumentList "/install /quiet /norestart" -Wait
-      # ── STEP 1: Install Tailscale, Sunshine & ViGEmBus ──────────────────────
+
+      # ── STEP 1: Install Tailscale, Sunshine & ViGEmBus ──────────────────
       - name: 1. Install Tailscale, Sunshine & ViGEmBus
         shell: pwsh
         run: |
           Write-Host "Downloading Tailscale..."
           curl.exe --retry 5 -L -o tailscale.exe https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe
           Start-Process ./tailscale.exe -ArgumentList "/quiet" -Wait
-          
+
           Write-Host "Downloading Sunshine..."
           $release = Invoke-RestMethod "https://api.github.com/repos/LizardByte/Sunshine/releases/latest"
           $asset = $release.assets | Where-Object { $_.name -like "*Windows-AMD64-portable.zip" } | Select-Object -First 1
-          
-          if (-not $asset) {
-            Write-Error "Failed to find the portable ZIP in the latest release."
-            exit 1
-          }
-          
+          if (-not $asset) { Write-Error "Failed to find the portable ZIP."; exit 1 }
           curl.exe --retry 5 -L -o sunshine.zip $($asset.browser_download_url)
-          
+
           Write-Host "Extracting Sunshine..."
           Expand-Archive -Path sunshine.zip -DestinationPath "C:\Sunshine" -Force
 
-          Write-Host "Downloading and installing ViGEmBus (required for gamepad support)..."
+          Write-Host "Installing ViGEmBus (gamepad support)..."
           $vigemRelease = Invoke-RestMethod "https://api.github.com/repos/ViGEm/ViGEmBus/releases/latest"
           $vigemAsset = $vigemRelease.assets | Where-Object { $_.name -like "*.exe" } | Select-Object -First 1
-
-          if (-not $vigemAsset) {
-            Write-Error "Failed to find the ViGEmBus installer in the latest release."
-            exit 1
-          }
-
+          if (-not $vigemAsset) { Write-Error "Failed to find ViGEmBus installer."; exit 1 }
           curl.exe --retry 5 -L -o vigembus_setup.exe $($vigemAsset.browser_download_url)
           Start-Process -FilePath ./vigembus_setup.exe -ArgumentList "/quiet /norestart" -Wait
 
-          Write-Host "Verifying ViGEmBus driver is running..."
           $driver = Get-Service -Name "ViGEmBus" -ErrorAction SilentlyContinue
-          if ($driver) {
-            Write-Host "ViGEmBus service found, status: $($driver.Status)"
-          } else {
-            Write-Warning "ViGEmBus service not found after install — gamepad support may not work."
-          }
-      # ── STEP 2: Connect Tailscale, Disable Firewall & Start Sunshine ──────
+          if ($driver) { Write-Host "ViGEmBus status: $($driver.Status)" }
+          else { Write-Warning "ViGEmBus not found — gamepad may not work." }
+
+      # ── STEP 2: Connect Tailscale, Configure & Start Sunshine ───────────
       - name: 2. Connect Tailscale & Start Sunshine
         shell: pwsh
         env:
           RUN_NUMBER: ${{ github.run_number }}
           TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+          SUNSHINE_USER: ${{ secrets.SUNSHINE_USER }}
+          SUNSHINE_PASS: ${{ secrets.SUNSHINE_PASS }}
         run: |
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$env:TAILSCALE_AUTHKEY"
-          
+          $ts = "C:\Program Files\Tailscale\tailscale.exe"
+          & $ts up --authkey="$env:TAILSCALE_AUTHKEY" --hostname="moonlight-vm"
+
           Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
-          
+
           $sunshineExe = Get-ChildItem -Path "C:\Sunshine" -Filter "sunshine.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
           $sunshineDir = (Get-Item $sunshineExe).DirectoryName
-          
-          Write-Host "Starting Sunshine from correct directory: $sunshineDir"
+
+          # Pre-seed Web UI credentials so you can log in immediately
+          if ($env:SUNSHINE_USER -and $env:SUNSHINE_PASS) {
+            Write-Host "Pre-seeding Sunshine credentials..."
+            Start-Process -FilePath $sunshineExe -WorkingDirectory $sunshineDir -ArgumentList "--creds `"$env:SUNSHINE_USER`" `"$env:SUNSHINE_PASS`"" -Wait
+          }
+
+          Write-Host "Starting Sunshine from: $sunshineDir"
           Start-Process -FilePath $sunshineExe -WorkingDirectory $sunshineDir -RedirectStandardError "C:\Sunshine\error_log.txt" -RedirectStandardOutput "C:\Sunshine\output_log.txt"
-          
+
           Write-Host "Waiting 30 seconds for Sunshine to initialize..."
           Start-Sleep -Seconds 30
-          $tailscaleIP = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
-          
+
+          # Verify Sunshine is alive locally
+          try {
+            Invoke-WebRequest -Uri "https://localhost:47990" -SkipCertificateCheck -UseBasicParsing -ErrorAction Stop | Out-Null
+            Write-Host "SUCCESS: Sunshine is running locally."
+          } catch {
+            Write-Host "FAILED: Sunshine not reachable locally — it may have crashed."
+            Write-Host "ERROR: $($_.Exception.Message)"
+          }
+
+          # Expose the localhost-only Web UI over the tailnet (THE FIX)
+          Write-Host "Exposing Sunshine Web UI over the tailnet..."
+          & $ts serve --bg --https=47990 https+insecure://localhost:47990
+          Start-Sleep -Seconds 3
+          Write-Host "--- TAILSCALE SERVE STATUS ---"
+          & $ts serve status
+
+          $tailscaleIP = & $ts ip -4
+          $dns = (& $ts status --json | ConvertFrom-Json).Self.DNSName.TrimEnd('.')
+
           Write-Host "=========================================="
           Write-Host "  RUN NUMBER       : $env:RUN_NUMBER"
           Write-Host "  TAILSCALE IP     : $tailscaleIP"
-          Write-Host "  SUNSHINE WEB UI  : https://$tailscaleIP`:47990"
+          Write-Host "  WEB UI (phone)   : https://$dns`:47990"
+          Write-Host "  MOONLIGHT HOST   : $tailscaleIP   (add this IP in Moonlight)"
           Write-Host "=========================================="
-          Write-Host "--- INTERNAL WEB SERVER TEST ---"
-          try {
-              $response = Invoke-WebRequest -Uri "https://localhost:47990" -SkipCertificateCheck -UseBasicParsing -ErrorAction Stop
-              Write-Host "SUCCESS: The VM can access its own Sunshine server! Your Web UI should now be online."
-          } catch {
-              Write-Host "FAILED: The VM cannot reach Sunshine. Sunshine has crashed."
-              Write-Host "ERROR: $($_.Exception.Message)"
-          }
-          
-          Write-Host "--- DIAGNOSTIC LOGS ---"
-          if (Test-Path "C:\Sunshine\config\sunshine.log") { 
-              Write-Host "--- SUNSHINE.LOG ---"
-              Get-Content "C:\Sunshine\config\sunshine.log" -Tail 30 -ErrorAction SilentlyContinue 
-          }
-          Write-Host "--- ERROR TXT ---"
-          Get-Content "C:\Sunshine\error_log.txt" -ErrorAction SilentlyContinue
-          Write-Host "--- OUTPUT TXT ---"
-          Get-Content "C:\Sunshine\output_log.txt" -ErrorAction SilentlyContinue
-      # ── STEP 3: Keep Alive ──────
+
+          Write-Host "--- SUNSHINE.LOG ---"
+          Get-Content "C:\Sunshine\config\sunshine.log" -Tail 30 -ErrorAction SilentlyContinue
+
+      # ── STEP 3: Keep Alive (with auto-restart) ──────────────────────────
       - name: 3. Keep Alive
         shell: pwsh
         run: |
-          $cutoff  = [DateTime]::Now.AddHours(5).AddMinutes(55)
+          $cutoff = [DateTime]::Now.AddHours(5).AddMinutes(55)
           while ([DateTime]::Now -lt $cutoff) {
             Start-Sleep -Seconds 60
+            try {
+              Invoke-WebRequest -Uri "https://localhost:47990" -SkipCertificateCheck -UseBasicParsing -ErrorAction Stop | Out-Null
+            } catch {
+              Write-Host "$(Get-Date): Sunshine down — restarting..."
+              $exe = Get-ChildItem -Path "C:\Sunshine" -Filter "sunshine.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
+              $dir = (Get-Item $exe).DirectoryName
+              Start-Process -FilePath $exe -WorkingDirectory $dir -RedirectStandardError "C:\Sunshine\error_log.txt" -RedirectStandardOutput "C:\Sunshine\output_log.txt"
+            }
           }
