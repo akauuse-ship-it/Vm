@@ -18,17 +18,17 @@ jobs:
           $ProgressPreference = 'SilentlyContinue'
 
           Write-Host "Downloading Tailscale..."
-          curl -L -o tailscale-setup.exe "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe"
+          curl.exe -L -o tailscale-setup.exe "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe"
           Start-Process -FilePath ".\tailscale-setup.exe" -ArgumentList "/quiet" -Wait
 
           Write-Host "Downloading Sunshine..."
-          curl -L -o sunshine.zip "https://github.com/LizardByte/Sunshine/releases/latest/download/sunshine-windows-portable.zip"
+          curl.exe -L -o sunshine.zip "https://github.com/LizardByte/Sunshine/releases/latest/download/sunshine-windows-portable.zip"
 
           Write-Host "Extracting Sunshine..."
           Expand-Archive sunshine.zip -DestinationPath C:\Sunshine -Force
 
           Write-Host "Installing ViGEmBus (gamepad support)..."
-          curl -L -o vigembus.exe "https://github.com/nefarius/ViGEmBus/releases/download/v1.22.0/ViGEmBus_1.22.0_x64_x86_arm64.exe"
+          curl.exe -L -o vigembus.exe "https://github.com/nefarius/ViGEmBus/releases/download/v1.22.0/ViGEmBus_1.22.0_x64_x86_arm64.exe"
           Start-Process -FilePath ".\vigembus.exe" -ArgumentList "/qn" -Wait
           $svc = Get-Service ViGEmBus -ErrorAction SilentlyContinue
           Write-Host "ViGEmBus status: $($svc.Status)"
@@ -42,7 +42,7 @@ jobs:
           $ProgressPreference = 'SilentlyContinue'
 
           Write-Host "Downloading Virtual Display Driver..."
-          curl -L -o vdd.zip "https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/download/24.12.24/Signed-Driver-v24.12.24.zip"
+          curl.exe -L -o vdd.zip "https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/download/24.12.24/Signed-Driver-v24.12.24.zip"
           Expand-Archive vdd.zip -DestinationPath C:\VDD -Force
 
           Write-Host "Trusting driver certificate..."
@@ -60,7 +60,7 @@ jobs:
           pnputil /add-driver $inf.FullName /install
 
           Write-Host "Downloading nefcon (device creator)..."
-          curl -L -o nefcon.zip "https://github.com/nefarius/nefcon/releases/download/v1.11.0/nefcon_v1.11.0.zip"
+          curl.exe -L -o nefcon.zip "https://github.com/nefarius/nefcon/releases/download/v1.11.0/nefcon_v1.11.0.zip"
           Expand-Archive nefcon.zip -DestinationPath C:\nefcon -Force
           $nefcon = Get-ChildItem -Path C:\nefcon -Recurse -Filter "nefconw.exe" | Select-Object -First 1
 
