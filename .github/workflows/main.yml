@@ -1,0 +1,75 @@
+name: Moonlight Windows VM
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    steps:
+      # ── STEP 0: Performance + OS Tweaks ──────────────────────
+      - name: 0. Unlock Performance & Disable Sleep
+        shell: pwsh
+        run: |
+          powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+          reg add "HKEY_CURRENT_USER\Control Panel\Desktop" /v UserPreferencesMask /t REG_BINARY /d 9012038010000000 /f
+          reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v DisableLockWorkstation /t REG_DWORD /d 1 /f
+          reg add "HKCU\Control Panel\Desktop" /v ScreenSaveActive /t REG_SZ /d "0" /f
+          reg add "HKCU\Control Panel\Desktop" /v ScreenSaverIsSecure /t REG_SZ /d "0" /f
+          reg add "HKCU\Control Panel\Desktop" /v ScreenSaveTimeOut /t REG_SZ /d "0" /f
+          reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Personalization" /v NoLockScreen /t REG_DWORD /d 1 /f
+          powercfg /change standby-timeout-ac 0
+          powercfg /change monitor-timeout-ac 0
+          powercfg /change hibernate-timeout-ac 0
+          powercfg /change disk-timeout-ac 0
+          
+          # Install Visual C++ Redistributable (Required by Sunshine)
+          curl.exe -L -o vc_redist.x64.exe https://aka.ms/vs/17/release/vc_redist.x64.exe
+          Start-Process ./vc_redist.x64.exe -ArgumentList "/install /quiet /norestart" -Wait
+
+      # ── STEP 1: Install Tailscale & Sunshine ──────────────────────
+      - name: 1. Install Tailscale & Sunshine
+        shell: pwsh
+        run: |
+          Write-Host "Downloading Tailscale..."
+          curl.exe -L -o tailscale.exe https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe
+          Start-Process ./tailscale.exe -ArgumentList "/quiet" -Wait
+          
+          Write-Host "Downloading Sunshine..."
+          # Fetch the latest Windows installer from Sunshine's GitHub
+          $release = Invoke-RestMethod "https://api.github.com/repos/LizardByte/Sunshine/releases/latest"
+          $asset = $release.assets | Where-Object { $_.name -match "sunshine-windows-installer.exe" } | Select-Object -First 1
+          curl.exe -L -o sunshine.exe $asset.browser_download_url
+          Start-Process ./sunshine.exe -ArgumentList "/S" -Wait
+
+      # ── STEP 2: Start Services & Connect ──────────────────────
+      - name: 2. Connect Tailscale & Start Sunshine
+        shell: pwsh
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          # Connect to Tailscale using the same key from your Colab setup
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="tskey-auth-kZvDwABCsH11CNTRL-mk6GSohWYoP4kEy1SVupnPRbUDBfD2DCb"
+          
+          # Start Sunshine in the background
+          Start-Process "C:\Program Files\Sunshine\sunshine.exe"
+          
+          Start-Sleep -Seconds 5
+          $tailscaleIP = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
+          
+          Write-Host "=========================================="
+          Write-Host "  RUN NUMBER       : $env:RUN_NUMBER"
+          Write-Host "  TAILSCALE IP     : $tailscaleIP"
+          Write-Host "  SUNSHINE WEB UI  : https://$tailscaleIP`:47990"
+          Write-Host "=========================================="
+          Write-Host "  1. Check your Tailscale app to ensure the GitHub machine is green."
+          Write-Host "  2. Go to the Sunshine Web UI link to set up your PIN."
+          Write-Host "=========================================="
+
+      # ── STEP 3: Keep Alive (Runs silently for 6 hours) ──────
+      - name: 3. Keep Alive
+        shell: pwsh
+        run: |
+          $cutoff  = [DateTime]::Now.AddHours(5).AddMinutes(55)
+          while ([DateTime]::Now -lt $cutoff) {
+            Start-Sleep -Seconds 60
+          }
