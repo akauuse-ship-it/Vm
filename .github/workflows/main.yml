@@ -6,22 +6,28 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 360
     steps:
-      # ── STEP 0: Performance & OS Tweaks ──────────────────────
-      - name: 0. Unlock Performance & Disable Sleep
+      # ── STEP 0: OS Tweaks, Audio & Virtual Display ──────────────────────
+      - name: 0. OS Tweaks, Audio & Virtual Monitor
         shell: pwsh
         run: |
           powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
           reg add "HKEY_CURRENT_USER\Control Panel\Desktop" /v UserPreferencesMask /t REG_BINARY /d 9012038010000000 /f
           reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v DisableLockWorkstation /t REG_DWORD /d 1 /f
-          reg add "HKCU\Control Panel\Desktop" /v ScreenSaveActive /t REG_SZ /d "0" /f
-          reg add "HKCU\Control Panel\Desktop" /v ScreenSaverIsSecure /t REG_SZ /d "0" /f
-          reg add "HKCU\Control Panel\Desktop" /v ScreenSaveTimeOut /t REG_SZ /d "0" /f
           reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Personalization" /v NoLockScreen /t REG_DWORD /d 1 /f
-          powercfg /change standby-timeout-ac 0
-          powercfg /change monitor-timeout-ac 0
-          powercfg /change hibernate-timeout-ac 0
-          powercfg /change disk-timeout-ac 0
           
+          # Enable Windows Audio Service
+          Write-Host "Enabling Windows Audio Service..."
+          Set-Service -Name Audiosrv -StartupType Automatic
+          Start-Service -Name Audiosrv -ErrorAction SilentlyContinue
+          
+          # Install Virtual Display Driver to fake a monitor
+          Write-Host "Installing Virtual Display (usbmmidd)..."
+          curl.exe --retry 5 -L -o usbmmidd.zip https://www.amyuni.com/downloads/usbmmidd_v2.zip
+          Expand-Archive -Path usbmmidd.zip -DestinationPath C:\usbmmidd -Force
+          Start-Process -FilePath "C:\usbmmidd\deviceinstaller64.exe" -ArgumentList "install usbmmidd.inf usbmmidd" -Wait
+          Start-Process -FilePath "C:\usbmmidd\deviceinstaller64.exe" -ArgumentList "enableidd 1" -Wait
+          
+          # Install Visual C++
           curl.exe --retry 5 --retry-connrefused -L -o vc_redist.x64.exe https://aka.ms/vs/17/release/vc_redist.x64.exe
           Start-Process ./vc_redist.x64.exe -ArgumentList "/install /quiet /norestart" -Wait
 
@@ -73,18 +79,11 @@ jobs:
           Write-Host "--- INTERNAL WEB SERVER TEST ---"
           try {
               $response = Invoke-WebRequest -Uri "https://localhost:47990" -SkipCertificateCheck -UseBasicParsing -ErrorAction Stop
-              Write-Host "SUCCESS: The VM can access its own Sunshine server! If you can't reach it, your phone browser is the problem."
+              Write-Host "SUCCESS: The VM can access its own Sunshine server! Your Web UI should now be online."
           } catch {
               Write-Host "FAILED: The VM cannot reach Sunshine. Sunshine has crashed."
               Write-Host "ERROR: $($_.Exception.Message)"
           }
-
-          Write-Host "--- SUNSHINE LOGS ---"
-          if (Test-Path "C:\Sunshine\config\sunshine.log") { 
-              Get-Content "C:\Sunshine\config\sunshine.log" -Tail 30 -ErrorAction SilentlyContinue 
-          }
-          Write-Host "--- ERROR TXT ---"
-          Get-Content "C:\Sunshine\error_log.txt" -ErrorAction SilentlyContinue
 
       # ── STEP 3: Keep Alive ──────
       - name: 3. Keep Alive
