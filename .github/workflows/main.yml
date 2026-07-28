@@ -22,7 +22,6 @@ jobs:
           powercfg /change hibernate-timeout-ac 0
           powercfg /change disk-timeout-ac 0
           
-          # Resilient download logic
           curl.exe --retry 5 --retry-connrefused -L -o vc_redist.x64.exe https://aka.ms/vs/17/release/vc_redist.x64.exe
           Start-Process ./vc_redist.x64.exe -ArgumentList "/install /quiet /norestart" -Wait
 
@@ -54,17 +53,15 @@ jobs:
         env:
           RUN_NUMBER: ${{ github.run_number }}
         run: |
-          # Connect to Tailscale using your new key (forced lowercase 't')
           & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="tskey-auth-kvVxmawkXC11CNTRL-AMNCuL51xTPMaVM4AFLXUPAc5KYYqX72"
           
-          # DISABLE WINDOWS FIREWALL 
           Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
           
-          # Start Sunshine and capture logs
           $sunshineExe = Get-ChildItem -Path "C:\Sunshine" -Filter "sunshine.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
           Start-Process $sunshineExe -RedirectStandardError "C:\Sunshine\error_log.txt" -RedirectStandardOutput "C:\Sunshine\output_log.txt"
           
-          Start-Sleep -Seconds 10
+          Write-Host "Waiting 30 seconds for Sunshine to initialize..."
+          Start-Sleep -Seconds 30
           $tailscaleIP = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
           
           Write-Host "=========================================="
@@ -73,17 +70,21 @@ jobs:
           Write-Host "  SUNSHINE WEB UI  : https://$tailscaleIP`:47990"
           Write-Host "=========================================="
 
-          # Check if Sunshine is actually running
-          $sunshineProcess = Get-Process -Name "sunshine" -ErrorAction SilentlyContinue
-          if ($sunshineProcess) {
-              Write-Host "SUCCESS: Sunshine is running in the background!"
-          } else {
-              Write-Host "CRITICAL ERROR: Sunshine crashed immediately. Printing logs below..."
-              Write-Host "--- ERROR LOG ---"
-              Get-Content "C:\Sunshine\error_log.txt" -ErrorAction SilentlyContinue
-              Write-Host "--- OUTPUT LOG ---"
-              Get-Content "C:\Sunshine\output_log.txt" -ErrorAction SilentlyContinue
+          Write-Host "--- INTERNAL WEB SERVER TEST ---"
+          try {
+              $response = Invoke-WebRequest -Uri "https://localhost:47990" -SkipCertificateCheck -UseBasicParsing -ErrorAction Stop
+              Write-Host "SUCCESS: The VM can access its own Sunshine server! If you can't reach it, your phone browser is the problem."
+          } catch {
+              Write-Host "FAILED: The VM cannot reach Sunshine. Sunshine has crashed."
+              Write-Host "ERROR: $($_.Exception.Message)"
           }
+
+          Write-Host "--- SUNSHINE LOGS ---"
+          if (Test-Path "C:\Sunshine\config\sunshine.log") { 
+              Get-Content "C:\Sunshine\config\sunshine.log" -Tail 30 -ErrorAction SilentlyContinue 
+          }
+          Write-Host "--- ERROR TXT ---"
+          Get-Content "C:\Sunshine\error_log.txt" -ErrorAction SilentlyContinue
 
       # ── STEP 3: Keep Alive ──────
       - name: 3. Keep Alive
