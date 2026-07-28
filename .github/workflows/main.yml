@@ -22,7 +22,6 @@ jobs:
           powercfg /change hibernate-timeout-ac 0
           powercfg /change disk-timeout-ac 0
           
-          # Install Visual C++ Redistributable (Required by Sunshine)
           curl.exe -L -o vc_redist.x64.exe https://aka.ms/vs/17/release/vc_redist.x64.exe
           Start-Process ./vc_redist.x64.exe -ArgumentList "/install /quiet /norestart" -Wait
 
@@ -36,7 +35,6 @@ jobs:
           
           Write-Host "Downloading Sunshine..."
           $release = Invoke-RestMethod "https://api.github.com/repos/LizardByte/Sunshine/releases/latest"
-          # Target the portable zip folder to avoid silent installer crashes
           $asset = $release.assets | Where-Object { $_.name -like "*Windows-AMD64-portable.zip" } | Select-Object -First 1
           
           if (-not $asset) {
@@ -55,17 +53,17 @@ jobs:
         env:
           RUN_NUMBER: ${{ github.run_number }}
         run: |
-          # Connect to Tailscale using your new key (forced lowercase 't')
+          # Connect to Tailscale
           & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="tskey-auth-kjaRuKQ2zx11CNTRL-yVRUWBduk8TvtPDS3bB78TAGU5sAcRJ71"
           
-          # DISABLE WINDOWS FIREWALL TO ALLOW SUNSHINE CONNECTIONS
+          # DISABLE WINDOWS FIREWALL 
           Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
           
-          # Find and start the extracted portable sunshine.exe
+          # Start Sunshine and capture logs to see if it crashes
           $sunshineExe = Get-ChildItem -Path "C:\Sunshine" -Filter "sunshine.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
-          Start-Process $sunshineExe
+          Start-Process $sunshineExe -RedirectStandardError "C:\Sunshine\error_log.txt" -RedirectStandardOutput "C:\Sunshine\output_log.txt"
           
-          Start-Sleep -Seconds 5
+          Start-Sleep -Seconds 10
           $tailscaleIP = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
           
           Write-Host "=========================================="
@@ -73,12 +71,20 @@ jobs:
           Write-Host "  TAILSCALE IP     : $tailscaleIP"
           Write-Host "  SUNSHINE WEB UI  : https://$tailscaleIP`:47990"
           Write-Host "=========================================="
-          Write-Host "  1. Check your Tailscale app to ensure the GitHub machine is green."
-          Write-Host "  2. Go to the Sunshine Web UI link to set up your PIN (make sure to use https://)."
-          Write-Host "  3. Open the Moonlight App on your LG TV and pair."
-          Write-Host "=========================================="
 
-      # ── STEP 3: Keep Alive (Runs silently for 6 hours) ──────
+          # Check if Sunshine is actually running
+          $sunshineProcess = Get-Process -Name "sunshine" -ErrorAction SilentlyContinue
+          if ($sunshineProcess) {
+              Write-Host "SUCCESS: Sunshine is running in the background!"
+          } else {
+              Write-Host "CRITICAL ERROR: Sunshine crashed immediately. Printing logs below..."
+              Write-Host "--- ERROR LOG ---"
+              Get-Content "C:\Sunshine\error_log.txt" -ErrorAction SilentlyContinue
+              Write-Host "--- OUTPUT LOG ---"
+              Get-Content "C:\Sunshine\output_log.txt" -ErrorAction SilentlyContinue
+          }
+
+      # ── STEP 3: Keep Alive ──────
       - name: 3. Keep Alive
         shell: pwsh
         run: |
