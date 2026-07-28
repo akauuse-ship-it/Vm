@@ -22,7 +22,16 @@ jobs:
           Start-Process -FilePath ".\tailscale-setup.exe" -ArgumentList "/quiet" -Wait
 
           Write-Host "Downloading Sunshine..."
-          curl.exe -L -o sunshine.zip "https://github.com/LizardByte/Sunshine/releases/latest/download/sunshine-windows-portable.zip"
+          curl.exe -L -o sunshine.zip "https://github.com/LizardByte/Sunshine/releases/download/v0.23.1/sunshine-windows-portable.zip"
+
+          # Sanity check: make sure we actually got a zip, not an error page
+          $size = (Get-Item sunshine.zip).Length
+          Write-Host "Sunshine download size: $size bytes"
+          if ($size -lt 1MB) {
+            Write-Host "ERROR: Sunshine download failed (file too small). Contents:"
+            Get-Content sunshine.zip
+            exit 1
+          }
 
           Write-Host "Extracting Sunshine..."
           Expand-Archive sunshine.zip -DestinationPath C:\Sunshine -Force
