@@ -69,7 +69,10 @@ jobs:
           Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
           
           $sunshineExe = Get-ChildItem -Path "C:\Sunshine" -Filter "sunshine.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
-          Start-Process $sunshineExe -RedirectStandardError "C:\Sunshine\error_log.txt" -RedirectStandardOutput "C:\Sunshine\output_log.txt"
+          $sunshineDir = (Get-Item $sunshineExe).DirectoryName
+          
+          Write-Host "Starting Sunshine from correct directory: $sunshineDir"
+          Start-Process -FilePath $sunshineExe -WorkingDirectory $sunshineDir -RedirectStandardError "C:\Sunshine\error_log.txt" -RedirectStandardOutput "C:\Sunshine\output_log.txt"
           
           Write-Host "Waiting 30 seconds for Sunshine to initialize..."
           Start-Sleep -Seconds 30
@@ -89,6 +92,16 @@ jobs:
               Write-Host "FAILED: The VM cannot reach Sunshine. Sunshine has crashed."
               Write-Host "ERROR: $($_.Exception.Message)"
           }
+          
+          Write-Host "--- DIAGNOSTIC LOGS ---"
+          if (Test-Path "C:\Sunshine\config\sunshine.log") { 
+              Write-Host "--- SUNSHINE.LOG ---"
+              Get-Content "C:\Sunshine\config\sunshine.log" -Tail 30 -ErrorAction SilentlyContinue 
+          }
+          Write-Host "--- ERROR TXT ---"
+          Get-Content "C:\Sunshine\error_log.txt" -ErrorAction SilentlyContinue
+          Write-Host "--- OUTPUT TXT ---"
+          Get-Content "C:\Sunshine\output_log.txt" -ErrorAction SilentlyContinue
 
       # ── STEP 3: Keep Alive ──────
       - name: 3. Keep Alive
