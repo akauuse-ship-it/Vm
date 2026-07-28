@@ -9,103 +9,93 @@ jobs:
     timeout-minutes: 355
 
     steps:
-      # =============================================
-      # 1. Download Tailscale, Sunshine, ViGEmBus
-      # =============================================
       - name: Download and install components
         shell: powershell
         run: |
           $ProgressPreference = 'SilentlyContinue'
-
-          function Assert-Download($path) {
-            $size = (Get-Item $path).Length
-            Write-Host "$path size: $size bytes"
-            if ($size -lt 100KB) {
-              Write-Host "ERROR: $path download failed (file too small). Contents:"
-              Get-Content $path
-              exit 1
-            }
-          }
-
           Write-Host "Downloading Tailscale..."
           curl.exe -L -o tailscale-setup.exe "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe"
-          Assert-Download "tailscale-setup.exe"
           Start-Process -FilePath ".\tailscale-setup.exe" -ArgumentList "/quiet" -Wait
-
           Write-Host "Downloading Sunshine..."
           curl.exe -L -o sunshine.zip "https://github.com/LizardByte/Sunshine/releases/download/v0.23.1/sunshine-windows-portable.zip"
-          Assert-Download "sunshine.zip"
-
-          Write-Host "Extracting Sunshine..."
+          if ((Get-Item sunshine.zip).Length -lt 100KB) { Write-Host "ERROR: Sunshine download failed"; exit 1 }
           Expand-Archive sunshine.zip -DestinationPath C:\Sunshine -Force
-
-          Write-Host "Installing ViGEmBus (gamepad support)..."
+          Write-Host "Installing ViGEmBus..."
           curl.exe -L -o vigembus.exe "https://github.com/nefarius/ViGEmBus/releases/download/v1.22.0/ViGEmBus_1.22.0_x64_x86_arm64.exe"
-          Assert-Download "vigembus.exe"
           Start-Process -FilePath ".\vigembus.exe" -ArgumentList "/qn" -Wait
-          $svc = Get-Service ViGEmBus -ErrorAction SilentlyContinue
-          Write-Host "ViGEmBus status: $($svc.Status)"
+          Write-Host "Components installed."
 
-      # =============================================
-      # 2. Install Virtual Display (Amyuni usbmmidd)
-      # =============================================
       - name: Install Virtual Display
         shell: powershell
         run: |
           $ProgressPreference = 'SilentlyContinue'
-
-          Write-Host "Downloading Amyuni usbmmidd virtual display..."
           curl.exe -L -o usbmmidd.zip "https://www.amyuni.com/downloads/usbmmidd_v2.zip"
-
-          $size = (Get-Item usbmmidd.zip).Length
-          Write-Host "usbmmidd.zip size: $size bytes"
-          if ($size -lt 100KB) {
-            Write-Host "WARNING: usbmmidd download failed. Skipping (RDP will still work)."
-            exit 0
-          }
-
+          if ((Get-Item usbmmidd.zip).Length -lt 100KB) { Write-Host "WARNING: skip virtual display"; exit 0 }
           Expand-Archive usbmmidd.zip -DestinationPath C:\usbmmidd -Force
           $dir = Get-ChildItem -Path C:\usbmmidd -Recurse -Filter "deviceinstaller64.exe" | Select-Object -First 1 | ForEach-Object { $_.DirectoryName }
-          Write-Host "Installer found at: $dir"
           Set-Location $dir
-
-          Write-Host "Installing virtual display driver..."
           .\deviceinstaller64.exe install usbmmidd.inf usbmmidd
           Start-Sleep -Seconds 5
-
-          Write-Host "Enabling virtual monitor..."
           .\deviceinstaller64.exe enableidd 1
           Start-Sleep -Seconds 8
+          Write-Host "Virtual display enabled."
 
-          Write-Host "Display devices:"
-          Get-PnpDevice -Class Display | Format-Table Name, Status -AutoSize
-
-      # =============================================
-      # 3. Enable RDP (PRIMARY access method)
-      # =============================================
       - name: Enable Remote Desktop
         shell: powershell
         run: |
-          Write-Host "Setting password for runneradmin..."
           net user runneradmin "RdpPass123!"
-
-          Write-Host "Enabling RDP..."
           Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-
-          Write-Host "Relaxing NLA requirement (needed for some mobile RDP apps)..."
           Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 0
+          Write-Host "RDP enabled."
 
-          Write-Host "RDP enabled. User: runneradmin"
-
-      # =============================================
-      # 4. Configure Sunshine (secondary access)
-      # =============================================
       - name: Configure Sunshine
         shell: powershell
         run: |
           $sunshineDir = Get-ChildItem -Path C:\Sunshine -Recurse -Filter "sunshine.exe" | Select-Object -First 1 | ForEach-Object { $_.DirectoryName }
-          Write-Host "Sunshine found at: $sunshineDir"
+          Write-Host "Sunshine at: $sunshineDir"
           echo "SUNSHINE_DIR=$sunshineDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $confDir = Join-Path $sunshineDir "config"
+          New-Item -ItemType Directory -Path $confDir -Force | Out-Null
+          Set-Content -Path (Join-Path $confDir "sunshine.conf") -Value "encoder = software"
+          Add-Content -Path (Join-Path $confDir "sunshine.conf") -Value "sw_preset = ultrafast"
+          Add-Content -Path (Join-Path $confDir "sunshine.conf") -Value "min_log_level = info"
+          & (Join-Path $sunshineDir "sunshine.exe") --creds admin "ChangeMe123!"
+          Write-Host "Config done."
 
-          $confDir = Join-Path $sunshineDir "config
+      - name: Start Tailscale and Sunshine
+        shell: powershell
+        env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+        run: |
+          $ts = "C:\Program Files\Tailscale\tailscale.exe"
+          & $ts up --authkey=$env:TS_AUTHKEY --hostname=moonlight-vm --accept-routes --unattended
+          Start-Sleep -Seconds 5
+          $tsIP = (& $ts ip -4).Trim()
+          $status = & $ts status --json | ConvertFrom-Json
+          $dnsName = $status.Self.DNSName.TrimEnd('.')
+          Start-Process -FilePath (Join-Path $env:SUNSHINE_DIR "sunshine.exe") -WorkingDirectory $env:SUNSHINE_DIR
+          Start-Sleep -Seconds 30
+          & $ts serve --bg --https=47990 https+insecure://localhost:47990
+          Write-Host "=========================================="
+          Write-Host "  TAILSCALE IP : $tsIP"
+          Write-Host "  WEB UI       : https://${dnsName}:47990"
+          Write-Host "  WEB UI LOGIN : admin / ChangeMe123!"
+          Write-Host "  RDP ADDRESS  : $tsIP  (port 3389)"
+          Write-Host "  RDP LOGIN    : runneradmin / RdpPass123!"
+          Write-Host "=========================================="
+
+      - name: Keep alive
+        shell: powershell
+        run: |
+          $cutoff = [DateTime]::Now.AddHours(5).AddMinutes(55)
+          while ([DateTime]::Now -lt $cutoff) {
+            $proc = Get-Process sunshine -ErrorAction SilentlyContinue
+            if (-not $proc) {
+              Write-Host "Sunshine down - restarting..."
+              Start-Process -FilePath (Join-Path $env:SUNSHINE_DIR "sunshine.exe") -WorkingDirectory $env:SUNSHINE_DIR
+              Start-Sleep -Seconds 20
+            }
+            Start-Sleep -Seconds 30
+          }
+          Write-Host "Done."
