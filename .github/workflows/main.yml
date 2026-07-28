@@ -22,7 +22,7 @@ jobs:
           powercfg /change hibernate-timeout-ac 0
           powercfg /change disk-timeout-ac 0
           
-          # Added retry logic so random network drops don't kill the script
+          # Resilient download logic
           curl.exe --retry 5 --retry-connrefused -L -o vc_redist.x64.exe https://aka.ms/vs/17/release/vc_redist.x64.exe
           Start-Process ./vc_redist.x64.exe -ArgumentList "/install /quiet /norestart" -Wait
 
@@ -54,13 +54,13 @@ jobs:
         env:
           RUN_NUMBER: ${{ github.run_number }}
         run: |
-          # Connect to Tailscale
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="tskey-auth-kjaRuKQ2zx11CNTRL-yVRUWBduk8TvtPDS3bB78TAGU5sAcRJ71"
+          # Connect to Tailscale using your new key (forced lowercase 't')
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="tskey-auth-kvVxmawkXC11CNTRL-AMNCuL51xTPMaVM4AFLXUPAc5KYYqX72"
           
           # DISABLE WINDOWS FIREWALL 
           Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
           
-          # Start Sunshine and capture logs to see if it crashes
+          # Start Sunshine and capture logs
           $sunshineExe = Get-ChildItem -Path "C:\Sunshine" -Filter "sunshine.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
           Start-Process $sunshineExe -RedirectStandardError "C:\Sunshine\error_log.txt" -RedirectStandardOutput "C:\Sunshine\output_log.txt"
           
