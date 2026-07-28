@@ -22,7 +22,8 @@ jobs:
           powercfg /change hibernate-timeout-ac 0
           powercfg /change disk-timeout-ac 0
           
-          curl.exe -L -o vc_redist.x64.exe https://aka.ms/vs/17/release/vc_redist.x64.exe
+          # Added retry logic so random network drops don't kill the script
+          curl.exe --retry 5 --retry-connrefused -L -o vc_redist.x64.exe https://aka.ms/vs/17/release/vc_redist.x64.exe
           Start-Process ./vc_redist.x64.exe -ArgumentList "/install /quiet /norestart" -Wait
 
       # ── STEP 1: Install Tailscale & Sunshine ──────────────────────
@@ -30,7 +31,7 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Downloading Tailscale..."
-          curl.exe -L -o tailscale.exe https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe
+          curl.exe --retry 5 -L -o tailscale.exe https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe
           Start-Process ./tailscale.exe -ArgumentList "/quiet" -Wait
           
           Write-Host "Downloading Sunshine..."
@@ -42,7 +43,7 @@ jobs:
             exit 1
           }
           
-          curl.exe -L -o sunshine.zip $($asset.browser_download_url)
+          curl.exe --retry 5 -L -o sunshine.zip $($asset.browser_download_url)
           
           Write-Host "Extracting Sunshine..."
           Expand-Archive -Path sunshine.zip -DestinationPath "C:\Sunshine" -Force
