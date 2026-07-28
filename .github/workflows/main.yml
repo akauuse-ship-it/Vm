@@ -49,7 +49,7 @@ jobs:
           Write-Host "Extracting Sunshine..."
           Expand-Archive -Path sunshine.zip -DestinationPath "C:\Sunshine" -Force
 
-      # ── STEP 2: Connect Tailscale & Start Sunshine ──────────────────────
+      # ── STEP 2: Connect Tailscale, Disable Firewall & Start Sunshine ──────
       - name: 2. Connect Tailscale & Start Sunshine
         shell: pwsh
         env:
@@ -57,6 +57,9 @@ jobs:
         run: |
           # Connect to Tailscale
           & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="tskey-auth-kZvDwABCsH11CNTRL-mk6GSohWYoP4kEy1SVupnPRbUDBfD2DCb"
+          
+          # DISABLE WINDOWS FIREWALL TO ALLOW SUNSHINE CONNECTIONS
+          Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
           
           # Find and start the extracted portable sunshine.exe
           $sunshineExe = Get-ChildItem -Path "C:\Sunshine" -Filter "sunshine.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
@@ -71,7 +74,7 @@ jobs:
           Write-Host "  SUNSHINE WEB UI  : https://$tailscaleIP`:47990"
           Write-Host "=========================================="
           Write-Host "  1. Check your Tailscale app to ensure the GitHub machine is green."
-          Write-Host "  2. Go to the Sunshine Web UI link to set up your PIN."
+          Write-Host "  2. Go to the Sunshine Web UI link to set up your PIN (make sure to use https://)."
           Write-Host "  3. Open the Moonlight App on your LG TV and pair."
           Write-Host "=========================================="
 
