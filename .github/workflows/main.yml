@@ -1,4 +1,4 @@
-name: Virtual Machine with GPU Power
+name: Virtual Machine
 on:
   workflow_dispatch:
 jobs:
@@ -6,27 +6,8 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 360
     steps:
-      # ── STEP 0.1: RESTORE PERMANENT STORAGE ──────────────────────
-      - name: 0.1 Restore Data from Artifacts
-        uses: actions/download-artifact@v4
-        continue-on-error: true # Will fail gracefully on the very first run
-        with:
-          name: data-backup
-          path: C:\
-          
-      - name: 0.2 Unpack Data (if exists)
-        shell: pwsh
-        run: |
-          if (Test-Path C:\backup.tgz) {
-            Write-Host "Found previous backup. Extracting..."
-            tar -xzf C:\backup.tgz -C C:\
-          } else {
-            Write-Host "No backup found. Starting fresh."
-            New-Item -Path C:\Data -ItemType Directory -Force
-          }
-
-      # ── STEP 1: Performance + AnyDesk + RDP Setup ──────────────────────
-      - name: 1. Unlock Performance + Enable RDP + AnyDesk
+      # ── STEP 0: Performance + AnyDesk + RDP Setup ──────────────────────
+      - name: 0. Unlock Performance + Enable RDP + AnyDesk
         shell: pwsh
         run: |
           powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
@@ -82,13 +63,13 @@ jobs:
           $boreExe = Get-ChildItem "C:\bore" -Recurse -Filter "bore.exe" | Select-Object -First 1 -ExpandProperty FullName
           Copy-Item $boreExe "C:\bore.exe" -Force
 
-      # ── STEP 2: Show Session Info ──────────────────────
-      - name: 2. Show Session Info
+      # ── STEP 1: Show Session Info ──────────────────────
+      - name: 1. Show Session Info
         shell: pwsh
         env:
           RUN_NUMBER: ${{ github.run_number }}
         run: |
-          # Setup AnyDesk Password and Fetch ID
+          # 1. Setup AnyDesk Password and Fetch ID
           echo "GitHub@2026" | & "C:\AnyDesk\AnyDesk.exe" --set-password
           $idFile = "C:\ProgramData\AnyDesk\system.conf"
           $ID = ""
@@ -100,7 +81,7 @@ jobs:
             Start-Sleep -Seconds 5
           }
           
-          # Start Bore Tunnel
+          # 2. Start Bore Tunnel
           New-Item -Path "C:\GamingVM" -ItemType Directory -Force | Out-Null
           $outFile = "C:\GamingVM\bore_out.txt"
           $errFile = "C:\GamingVM\bore_err.txt"
@@ -132,6 +113,7 @@ jobs:
                      Select-Object -First 1 -ExpandProperty IPAddressToString
           } catch { $rdpIP = "bore.pub" }
           
+          # 3. Print the output. This step will now END here, allowing logs to display instantly.
           Write-Host "=========================================="
           Write-Host "  RUN NUMBER : $env:RUN_NUMBER"
           Write-Host "  ANYDESK ID : $ID"
@@ -142,50 +124,11 @@ jobs:
           Write-Host "  PASSWORD   : GitHub@2026"
           Write-Host "=========================================="
 
-      # ── STEP 3: OFFLOAD WORK TO KAGGLE GPU ──────────────────────
-      - name: 3. Trigger Kaggle GPU Rendering
-        shell: pwsh
-        env:
-          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USER }}
-          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
-        run: |
-          # 1. Guarantee API authentication works by writing the JSON manually
-          $KaggleDir = "$env:USERPROFILE\.kaggle"
-          New-Item -ItemType Directory -Force -Path $KaggleDir | Out-Null
-          $KaggleJson = @{
-              username = $env:KAGGLE_USERNAME
-              key      = $env:KAGGLE_API_TOKEN
-          } | ConvertTo-Json
-          $KaggleJson | Out-File "$KaggleDir\kaggle.json" -Encoding ASCII
-          
-          # 2. Install Kaggle
-          pip install --quiet kaggle
-          
-          # 3. Pull scripts from repo to C:\Data and push to GPU
-          if (Test-Path .\gpu-kernel) {
-            Copy-Item -Path .\gpu-kernel -Destination C:\Data -Recurse -Force
-            kaggle kernels push -p C:\Data\gpu-kernel
-            
-            Write-Host "Job pushed to GPU! You can now log into RDP while this runs in the background."
-            
-            # Poll for completion
-            do {
-              Start-Sleep 60
-              $status = kaggle kernels status $env:KAGGLE_USERNAME/github-gpu-orchestrator | Select-String "complete"
-            } while (-not $status)
-            
-            # Download results directly into the persistent C:\Data folder
-            kaggle kernels output $env:KAGGLE_USERNAME/github-gpu-orchestrator -p C:\Data\gpu-results
-            Write-Host "GPU Rendering Complete. Files saved to C:\Data\gpu-results."
-          } else {
-            Write-Host "No gpu-kernel folder found in the repository. Skipping GPU step."
-          }
-
-      # ── STEP 4: Keep Alive (Runs silently for 5.5 hours) ──────
-      - name: 4. Keep Alive
+      # ── STEP 2: Keep Alive (Runs silently for 6 hours) ──────
+      - name: 2. Keep Alive
         shell: pwsh
         run: |
-          $cutoff  = [DateTime]::Now.AddHours(5).AddMinutes(30) # Reduced slightly to ensure backup step has time to run
+          $cutoff  = [DateTime]::Now.AddHours(5).AddMinutes(55)
           
           while ([DateTime]::Now -lt $cutoff) {
             Start-Sleep -Seconds 60
@@ -202,19 +145,3 @@ jobs:
                 -WindowStyle Hidden -PassThru | Out-Null
             }
           }
-
-      # ── STEP 5: BACKUP DATA BEFORE WIPE ──────────────────────
-      - name: 5. Archive C:\Data
-        if: always() # Ensures backup runs even if the time runs out
-        shell: pwsh
-        run: |
-          Write-Host "Packing C:\Data for permanent storage..."
-          tar -czf C:\backup.tgz -C C:\ Data
-          
-      - name: 5.1 Upload to GitHub Artifacts (Survives Wipe)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: data-backup
-          path: C:\backup.tgz
-          retention-days: 90
